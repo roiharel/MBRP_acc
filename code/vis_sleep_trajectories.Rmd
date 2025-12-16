@@ -1,0 +1,281 @@
+---
+title: "vis_sleep_trajectories"
+output: html_document
+date: "2025-03-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r vis, echo=FALSE}
+
+{
+library(sjPlot)
+library(insight)
+library(httr)
+library(brms)
+library( zoo )
+library( hms )
+library( data.table )
+library( stringr )
+library( lubridate )
+library( lmerTest )
+library( plotrix )
+library( suncalc )
+library( LaplacesDemon )
+library( dplyr )
+library( purrr )
+library( HDInterval )
+library(multcomp)
+library( nlme )
+library(tidyr) 
+library(lmerTest)
+library( sp )
+library( stats )
+library( entropy )
+library( reshape2 )
+library( plyr )
+library(rstan)
+library( brms )
+library(fitdistrplus)
+library( gamm4 )
+library(glmmTMB)
+library( mgcv )
+library( rstudioapi )
+}
+sep_thresh <- TRUE
+class_meth <- "percentile_thresh"
+
+full_dat <- read.csv( paste0( '/mnt/EAS_ind/rharel/analysis/JK_ch1/data/full_dat_', class_meth, '_sep_thresh_', sep_thresh, '.csv' ) )
+sleep_per <- read.csv( paste0( '/mnt/EAS_ind/rharel/analysis/JK_ch1/data/sleep_per_', class_meth, '_sep_thresh_', sep_thresh, '.csv' ) )
+
+full_dat$local_timestamp <- as.POSIXct( full_dat$local_timestamp, tz = 'UTC' )
+
+## save a variable denoting the total number of minutes in the day
+mins_in_day <- 60*15 # there are 14 hours between 17:00:00 and 07:00:00 
+
+missing_mins <- 45 ## this is the maximum total number of minutes of data that can be missing from a day and still have that day included in the analysis (for sleep period time and sleep based analyses; i.e. not ave_vedba)
+
+time_gap <- 20*60 ## this is the maximum allowable time gap between two accelerometer bursts (in seconds) that can exist in a noon-to-noon period without removing this noon-to-noon period from the data
+
+mov_window <- 9 ## this is the size of the moving window (in minutes) used in calculating the rolling median of the average VeDBA
+
+block_size <- 30 ## duration in minutes of the blocks of continuous inactivity that will be considered sleep
+
+gap_size <- 45 ## maximum duration between sleep blocks that will be merged
+
+percentile_for_no_mult <- 0.90 # this is the percentile threshold of the log VeDBA within the 18:00 to 06:30 period used to classify activity vs. inactivity (without multiplying by a multiplier)
+
+waso_block <- 3 ## this is the number of consecutive minutes of inactivity needed to classify a period as sleep. A waso_block of 1 means that anytime the value is below the threshold, the baboon in considered sleeping and anytime the value is above the threshold the baboon is considered awake
+
+frag_block <- 2 ## this is the number of minutes of waking that need to be consecutive to be considered a wake bout during the night (other epochs of wake that do not meet this criterion will still be considered wake for WASO and wake_bouts, but not frag_wake_bouts)
+
+
+
+################### Visualizing the sleep period and sleep/wake classification ########################## I think this has to be run after the stuff above
+
+
+## function for setting transparency of a color while plotting
+transp <- function(col, alpha=.5){
+  res <- apply(col2rgb(col),2, function(c) rgb(c[1]/255, c[2]/255, c[3]/255, alpha))
+  return(res)
+}
+
+ts_func <- function( time_vec ){
+  
+  num_time <- as.numeric( as_hms( time_vec ) )
+  
+  corr_time <- ifelse( num_time < 12*60*60, num_time + 12*60*60, num_time - 12*60*60 )
+  
+  return( corr_time )
+  
+}
+
+sleep_per_func <- function( tag, night, m_m = missing_mins, t_g = time_gap, m_w = mov_window, p_f_n_m = percentile_for_no_mult, b_s = block_size, g_s = gap_size, title = T, x_axis = T, plot_waso = T, w_b = waso_block, las = 1, ... ){
+  
+  ## save a variable denoting the total number of minutes in the day
+  mins_in_day <- mins_in_day
+  
+  ## subset the data to the given tag on the given night
+  night_dat <- full_dat[ full_dat$tag == tag & full_dat$night == night, ]
+  
+  ## sort the timestamps (they are probably already sorted)
+  night_times <- as.numeric( as_hms( c( night_dat$local_time, '18:00:00', '06:30:00' ) ) )
+  
+  night_times[ night_times < 12*60*60 ] <- night_times[ night_times < 12*60*60 ] + 24*60*60
+  
+  sorted_times <- sort( night_times )
+  
+  ## find the time difference in seconds between each burst
+  time_diffs <- as.numeric( diff(  sorted_times ) )
+  
+  ## if there is more than a single burst...
+  if(length(time_diffs) != 0){
+    
+    ## if the number of bursts exceed the minimum required number of bursts in a night (determined by missing mins) and if the gaps in the data are within the allowable gap size (determined by time_gap)...
+    if( nrow( night_dat ) > ( mins_in_day - missing_mins ) & max( time_diffs ) < time_gap ){
+      
+      ## take the rolling median of the log VeDBA and save it as a column
+      night_dat$roll_log_vedba <- rollmedian( night_dat$log_vedba, mov_window, fill = NA, align = 'center' )
+      
+      ## determine the threshold activity vs. inactivity threshold based on the percentile and the rolling median just produced
+      thresh <- quantile( night_dat$roll_log_vedba, percentile_for_no_mult, na.rm = T )
+      
+      ## put the rows of the dataframe in order from noon to noon (they should already be in this order, so this should be redundant)
+      night_dat <- night_dat[ order( ts_func( night_dat$local_time ) ), ]
+      
+      ## turn the times into numerical elements for plotting
+      ts_time <- ts_func( night_dat$local_time )
+      
+      if( title == F ){
+        ## plot the log VeDBA
+        #plot( ts_time, night_dat$log_vedba, type = 'l', xlab = 'Time', ylab = '', xaxt = 'n', las = las )
+        
+        plot( ts_time, night_dat$log_vedba, type = 'l', xlab = 'Time', ylab = '', xaxt = 'n', las = las, ylim = c( -2, 10 ), ... )
+        
+      }else{
+        ## plot the log VeDBA
+        plot( ts_time, night_dat$log_vedba, type = 'l', xlab = 'Time', ylab = '', main = paste( tag, night ), xaxt = 'n', las = las, ylim = c( -2, 10 ), ... )
+        
+        
+      }
+      
+      if( x_axis == T ){
+        
+        axis( 1, at = seq( 0, 60*24*60, 60*60), labels = c( as_hms( seq( 12*60*60, 60*23*60, 60*60) ), as_hms( seq( 0, 60*12*60, 60*60) ) ) ) 
+        
+      }
+      
+      title( ylab = 'log VeDBA', line = 3.9 )
+      ## plot the rolling median of the log VeDBA
+      lines( ts_time, night_dat$roll_log_vedba, col = 'red')
+      
+      ## plot the threshold of the log VeDBA
+      abline( h = thresh, col = 'blue' )
+      
+      ### find blocks of continuous inactivity
+      
+      ## find the run length encoding of periods above and below the threshold
+      temp <- rle(as.numeric( night_dat$roll_log_vedba < thresh ) ) 
+      
+      ## mark the rows that are part of runs (i.e. part of chunks that are greater than the block_size of either continuous activity or continuous inactivity )
+      night_dat$runs <- as.numeric( rep( temp$lengths > block_size, times = temp$lengths ) )
+      
+      ## mark the rows corresponding to sleep bouts. These sleep bouts are runs of inactivity
+      night_dat$sleep_bouts <- as.numeric( night_dat$roll_log_vedba < thresh & night_dat$runs == 1 )
+      
+      ## find when sleep bouts start and end
+      diffs <- diff( c(0, night_dat$sleep_bouts ) )
+      starts <- which( diffs == 1 ) [ -1 ]
+      ends <- which( diffs == -1 )
+      
+      ## if there are any sleep bouts...
+      if( length( which( diffs == 1 ) ) != 0){
+        
+        ## find the duration of the gaps between each sleep bout (the end of one sleep bout and the start of the next)
+        gaps <- as.numeric( night_dat$local_timestamp [ starts ] - night_dat$local_timestamp [ ends[ 1: length( starts ) ] ], units = 'mins' )
+        
+        ## sleep bouts separated by gaps that are shorter than that specified by gap_size will be merged. Note which of these gaps are shorter than the gap_size
+        inds_to_remove <- which( gaps < gap_size ) 
+        
+        ## if there are NO gaps between sleep bouts that are to be removed...
+        if( length( inds_to_remove ) == 0 ){
+          
+          ## set sleep onset index to be the start of sleep bouts
+          onset <- which( diffs == 1 ) 
+          
+          ## set waking index to be the end of sleep bouts
+          wake <- ends
+          
+        }else{ ## if there ARE gaps between sleep bouts that are to be removed...
+          
+          ## set sleep onset index to be the start of sleep bouts that do not correspond to the gaps to be removed (because these will be within sleep periods, not a start of a new bout)
+          onset <- which( diffs == 1 ) [ - (inds_to_remove + 1) ]
+          
+          ## set waking index to be the end of sleep bouts that do not correspond to the gaps to be removed
+          wake <- ends [ - inds_to_remove ]
+          
+        }
+        
+        ## determine which sleep period is the longest
+        per_ind <- which.max( as.numeric( night_dat$local_timestamp[ wake ] - night_dat$local_timestamp[ onset ], units = 'secs' ) )
+        
+        ## plot the sleep onset time and waking time on the log VeDBA plot
+        abline( v = c( ts_time[ onset[ per_ind ] ], ts_time[ wake[ per_ind ] ] ), col = 'orange', lty = 3, lwd = 4 )
+        
+        ## if you also want to plot WASO (this says WASO but it actually should plot all wake epochs)
+        if( plot_waso == T ){
+
+          ## calculate the threshold for sleeping and waking within the sleep period
+          SPT_thresh <- quantile( night_dat$log_vedba, percentile_for_no_mult, na.rm = T)
+          
+          ## plot the threshold
+          abline( h = SPT_thresh, col = 'blue', lty = 2, lwd = 2 )
+          
+          ## find blocks of continuous inactivity
+          
+          ## calcuate the run length encoding
+          temp <- rle(as.numeric( night_dat$log_vedba < SPT_thresh ) ) 
+          
+          ## mark the runs of activity or inactivity
+          night_dat$night_runs <- as.numeric( rep( temp$lengths >= waso_block, times = temp$lengths ) )
+          
+          ## mark the runs of inactivity as sleep bouts
+          night_dat$night_sleep_bouts <- as.numeric( night_dat$log_vedba < SPT_thresh & night_dat$night_runs == 1 )
+          
+          ## find the starts and ends of waking bouts
+          diffs <- diff( c(1, night_dat$night_sleep_bouts ) )
+          
+          starts <- which( diffs == -1 )
+          
+          ## add back in a "- 1" at the end of this line if you wish for the start and end times to be accurate. Now I just want to make it so the polygons show up even without a border
+          ends <- which( diffs == 1 )
+          
+          ## if there are waking bouts
+          if( length( which( diffs == -1 ) ) != 0){
+            
+            ## if the last waking bout never ends...
+            if( length( starts ) != length( ends ) ){
+              
+              ## make it end at the end of the sleep period
+              ends <- c(ends, length( diffs) )
+              
+            }
+            
+            ## save the start times and end times of waking bouts
+            starts <- ts_func( night_dat$local_time[ starts ] )
+            ends <- ts_func( night_dat$local_time[ ends ] )
+            
+            ## plot a polygon for each distinct waking bout
+            for( n in 1:length( starts ) ){
+              
+              polygon( x = c(starts[ n ], ends[ n ], ends[ n ], starts[ n ], starts[ n ] ), y = c( 0, 0, 10, 10, 0), col = transp('blue', .25), border = NA )
+              
+            }
+          }
+        }
+        
+        lines( ts_time, night_dat$log_vedba, col = 'black')
+        
+        
+        ## fill in the sleep period data frame with the sleep onset and waking time associated with the longest sleep period in the day (noon to noon)
+        return( c( night_dat$local_timestamp[ onset[ per_ind ] ], night_dat$local_timestamp[ wake[ per_ind ] ] ) )
+      } 
+    }
+  } 
+}
+
+for( i in 1:nrow( sleep_per ) ){
+  sleep_per_func( tag = sleep_per$tag[ i ], night = sleep_per$night[ i ] )
+}
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
