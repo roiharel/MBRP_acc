@@ -77,7 +77,8 @@ for(vedba_file in vedba_files) {
   ## turn the data table into a dataframe
   d1 <- as.data.frame(d1)
   
-  d1$local_timestamp <- d1$timestamp
+  d1$local_timestamp <- d1$timestamp + hours(3)
+
   ## make a column for the time of the burst
   d1$time <- str_split_fixed(d1$timestamp, " ", 2)[,2]
   
@@ -85,18 +86,18 @@ for(vedba_file in vedba_files) {
   d1$local_time <- str_split_fixed(d1$local_timestamp, " ", 2)[,2]
   
   ## Remove duplicates
-  d1 <- d1[!duplicated(d1[, c('local_timestamp')]), ]
+  d1 <- d1[!duplicated(d1[, c('timestamp')]), ]
   
   ## assign each minute of data to a given night. A night lasts from noon to noon. First, apply a time shift so that each night is a unit, and not each day
-  time_shift <- d1$local_timestamp - 12*60*60
+  time_shift <- d1$timestamp - 12*60*60
   
   ## save the date of the first night of the study (the date of the night is always the date of the evening at the beginning of that night)
-  start_date <- as.Date(min(d1$local_timestamp)- 12*60*60)
+  start_date <- as.Date(min(d1$timestamp)- 12*60*60)
   
   ## assign night as number of nights from the start of the study, with all data before the first noon representing night 1
   d1$night <- as.numeric(as.Date(time_shift) - start_date + 1)
   
-  d1$night_date <- as.Date(d1$local_timestamp - 12*60*60)
+  d1$night_date <- as.Date(d1$timestamp - 12*60*60)
   
   ## save a variable denoting the total number of minutes in the day
   mins_in_day <- 60*24 # there are 14 hours between 17:00:00 and 07:00:00 
@@ -122,7 +123,7 @@ for(vedba_file in vedba_files) {
   mpala_lon <- 36.8986
   
   ## make a copy of d1. We will fill in this new dataframe with information about if the baboon was asleep in each epoch
-  file_dat <- d1[d1$local_time > "12:00:00" | d1$local_time < "12:00:00", ]
+  file_dat <- d1[d1$time > "12:00:00" | d1$time < "12:00:00", ]
   
   file_dat$sleep_per <- NA ## binary indicating whether a row belongs to the sleep period window
   file_dat$pot_sleep <- NA ## binary indicating whether the row is below the VeDBA threshold, making it a potential sleep bout
@@ -190,7 +191,7 @@ for(vedba_file in vedba_files) {
     ## sort the timestamps, and book end them with the beginning and end of the night
     sorted_times <- c(
       as.POSIXct(paste(as.Date(night, origin = "1970-01-01", tz = 'UTC'), '18:00:00'), tz = 'UTC'), 
-      sort(night_dat$local_timestamp), 
+      sort(night_dat$timestamp), 
       as.POSIXct(paste(as.Date((night + 1), origin = "1970-01-01", tz = 'UTC'), '06:30:00'), tz = 'UTC')
     )
     
@@ -233,7 +234,7 @@ for(vedba_file in vedba_files) {
       
       #   
       #   ## find the duration of the gaps between each sleep bout
-      #   gaps <- as.numeric(night_dat$local_timestamp[starts] - night_dat$local_timestamp[ends[1:length(starts)]], units = 'mins')
+      #   gaps <- as.numeric(night_dat$timestamp[starts] - night_dat$timestamp[ends[1:length(starts)]], units = 'mins')
       #   
       #   ## sleep bouts separated by gaps that are shorter than that specified by gap_size will be merged
       #   inds_to_remove <- which(gaps < gap_size)
@@ -254,12 +255,12 @@ for(vedba_file in vedba_files) {
       #   }
       
       ## determine which sleep period is the longest
-      per_ind <- which.max(as.numeric(night_dat$local_timestamp[wake] - night_dat$local_timestamp[onset], units = 'secs'))
+      per_ind <- which.max(as.numeric(night_dat$timestamp[wake] - night_dat$timestamp[onset], units = 'secs'))
       
       ## fill in the sleep period data frame with the sleep onset and waking time associated with the longest sleep period in the day
       night_dat$sleep_per <- as.numeric(
-        night_dat$local_timestamp >= night_dat$local_timestamp[onset[per_ind]] & 
-          night_dat$local_timestamp <= night_dat$local_timestamp[wake[per_ind]]
+        night_dat$timestamp >= night_dat$timestamp[onset[per_ind]] & 
+          night_dat$timestamp <= night_dat$timestamp[wake[per_ind]]
       )
       
     } else { ## if there aren't any sleep bouts, record all rows as a 0 in the sleep_per column
