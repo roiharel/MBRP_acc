@@ -28,7 +28,10 @@ study_nights <- {
   max_n <- max(all_nights$night)
   min_d <- min(as.Date(all_nights$night_date))
   max_d <- max(as.Date(all_nights$night_date))
-  tibble(night = min_n:max_n, night_date = seq(min_d, max_d, by = "1 day"))
+  tibble(
+    night      = min_n:max_n,
+    night_date = min_d + (min_n:max_n - min_n)   # anchors dates to the night sequence
+  )
 }
 
 tag_names <- sub("\\.[^.]*$", "",basename(inactivity_files))
