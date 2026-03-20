@@ -13,8 +13,8 @@ The numbered scripts form the main processing pipeline:
 | `00_get_acc_data_from_movebank.py` | Python | Download and merge accelerometry data from Movebank API, saves as parquet |
 | `01_prep_tag_acc_long.py` | Python | Prepare tag ACC data in long format, apply calibration, per-animal processing |
 | `02_acc_to_vedba_par.py` | Python | Compute VeDBA from ACC bursts with parallelization |
-| `03_sleep_classification_alogrithm.R` | R | Classify sleep/awake states using Gaussian mixture models on log VeDBA |
-| `04_find_sleep_periods.R` | R | Extract sleep periods, onset/waking times, sleep efficiency metrics |
+| `03_find_inactivity.R` | R | Classify sleep/awake states using Gaussian mixture models on log VeDBA |
+| `04_get_sleep_metrics.R` | R | Extract sleep periods, onset/waking times, sleep efficiency metrics |
 
 ### Additional Analysis Scripts
 
@@ -40,7 +40,7 @@ The numbered scripts form the main processing pipeline:
 
 | Script | Description |
 |--------|-------------|
-| `run_acc2vedba_tmux.sh` | Bash script to run pipeline steps 00-02 in a tmux session |
+| `run_acc2vedbarun_process_sleep_metrics_tmux.sh` | Bash script to run pipeline steps 00-02 in a tmux session |
 
 ## Typical Workflow
 
